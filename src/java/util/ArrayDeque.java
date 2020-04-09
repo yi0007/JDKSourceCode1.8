@@ -96,6 +96,8 @@ public class ArrayDeque<E> extends AbstractCollection<E>
      * other.  We also guarantee that all array cells not holding
      * deque elements are always null.
      */
+    //存放元素，长度和capacity一致，并且总是2的次幂
+    //这一点，我们放在后面解释
     transient Object[] elements; // non-private to simplify nested class access
 
     /**
@@ -103,22 +105,36 @@ public class ArrayDeque<E> extends AbstractCollection<E>
      * element that would be removed by remove() or pop()); or an
      * arbitrary number equal to tail if the deque is empty.
      */
+    //标记队首元素所在的位置
     transient int head;
 
     /**
      * The index at which the next element would be added to the tail
      * of the deque (via addLast(E), add(E), or push(E)).
      */
+    //标记队尾元素所在的位置
     transient int tail;
 
     /**
      * The minimum capacity that we'll use for a newly created deque.
      * Must be a power of 2.
      */
+    //capacity最小值，也是2的次幂
     private static final int MIN_INITIAL_CAPACITY = 8;
 
     // ******  Array allocation and resizing utilities ******
 
+    /**
+     * 看到这段迷之代码了吗？在HashMap中也有一段类似的实现。但要读懂它，
+     * 我们需要先掌握以下几个概念：
+     *
+     * 1.在java中，int的长度是32位，有符号int可以表示的值范围是 (-2)31 到 231-1，其中最高位是符号位，0表示正数，1表示负数。
+     * 2.>>>：无符号右移，忽略符号位，空位都以0补齐。
+     * 3. |：位或运算，按位进行或操作，逢1为1。
+     *
+     * 但从实践上讲，没有可行的方法能够进行以上操作，即使通过&操作符可以将某一位置 0 或置 1，
+     * 也无法确认 最高位 出现的位置，也就是基于最高位进行操作不可行。
+     */
     private static int calculateSize(int numElements) {
         int initialCapacity = MIN_INITIAL_CAPACITY;
         // Find the best power of two to hold elements.
@@ -152,15 +168,20 @@ public class ArrayDeque<E> extends AbstractCollection<E>
      * when head and tail have wrapped around to become equal.
      */
     private void doubleCapacity() {
+        //只有head==tail时才可以扩容
         assert head == tail;
         int p = head;
         int n = elements.length;
+        //在head之后，还有多少元素
         int r = n - p; // number of elements to the right of p
+        //直接翻倍，因为capacity初始化时就已经是2的倍数了，这里无需再考虑
         int newCapacity = n << 1;
         if (newCapacity < 0)
             throw new IllegalStateException("Sorry, deque too big");
         Object[] a = new Object[newCapacity];
+        //左侧数据拷贝
         System.arraycopy(elements, p, a, 0, r);
+        //右侧数据拷贝
         System.arraycopy(elements, 0, a, r, p);
         elements = a;
         head = 0;
@@ -228,6 +249,7 @@ public class ArrayDeque<E> extends AbstractCollection<E>
      * @param e the element to add
      * @throws NullPointerException if the specified element is null
      */
+    //在队首添加一个元素，非空
     public void addFirst(E e) {
         if (e == null)
             throw new NullPointerException();
@@ -244,6 +266,7 @@ public class ArrayDeque<E> extends AbstractCollection<E>
      * @param e the element to add
      * @throws NullPointerException if the specified element is null
      */
+    //在队尾添加一个元素，非空
     public void addLast(E e) {
         if (e == null)
             throw new NullPointerException();
