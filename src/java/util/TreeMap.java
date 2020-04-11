@@ -106,6 +106,8 @@ import java.util.function.Consumer;
  * @see Comparator
  * @see Collection
  * @since 1.2
+ *
+ * 分析博客地址：https://www.jianshu.com/p/ae2a445b231f
  */
 
 public class TreeMap<K,V>
@@ -118,13 +120,16 @@ public class TreeMap<K,V>
      *
      * @serial
      */
+    // 比较器
     private final Comparator<? super K> comparator;
 
+    // 根节点
     private transient Entry<K,V> root;
 
     /**
      * The number of entries in the tree
      */
+    // 集合大小
     private transient int size = 0;
 
     /**
@@ -144,6 +149,7 @@ public class TreeMap<K,V>
      * {@code put(Object key, Object value)} call will throw a
      * {@code ClassCastException}.
      */
+    // 默认构造，比较器采用key的自然比较顺序
     public TreeMap() {
         comparator = null;
     }
@@ -162,6 +168,7 @@ public class TreeMap<K,V>
      *        If {@code null}, the {@linkplain Comparable natural
      *        ordering} of the keys will be used.
      */
+    // 指定比较器
     public TreeMap(Comparator<? super K> comparator) {
         this.comparator = comparator;
     }
@@ -180,6 +187,7 @@ public class TreeMap<K,V>
      *         or are not mutually comparable
      * @throws NullPointerException if the specified map is null
      */
+    // 从Map集合导入初始数据
     public TreeMap(Map<? extends K, ? extends V> m) {
         comparator = null;
         putAll(m);
@@ -194,6 +202,7 @@ public class TreeMap<K,V>
      *         and whose comparator is to be used to sort this map
      * @throws NullPointerException if the specified map is null
      */
+    // 从SortedMap导入初始数据
     public TreeMap(SortedMap<K, ? extends V> m) {
         comparator = m.comparator();
         try {
@@ -536,29 +545,32 @@ public class TreeMap<K,V>
         Entry<K,V> t = root;
         if (t == null) {
             compare(key, key); // type (and possibly null) check
-
+            // 新建一个元素，默认颜色黑色
             root = new Entry<>(key, value, null);
             size = 1;
             modCount++;
             return null;
         }
+
+        // 根节点不为空，有元素时的情况
         int cmp;
         Entry<K,V> parent;
         // split comparator and comparable paths
         Comparator<? super K> cpr = comparator;
         if (cpr != null) {
             do {
-                parent = t;
+                parent = t;// 把t暂存到parent中
                 cmp = cpr.compare(key, t.key);
                 if (cmp < 0)
-                    t = t.left;
+                    t = t.left;// 比较小，往左侧插入
                 else if (cmp > 0)
-                    t = t.right;
+                    t = t.right;// 比较大，往右侧插入
                 else
-                    return t.setValue(value);
+                    return t.setValue(value);// 一样大，所以就是更新当前值
             } while (t != null);
         }
         else {
+            // 使用key的比较器，while循环原理和上述一致
             if (key == null)
                 throw new NullPointerException();
             @SuppressWarnings("unchecked")
@@ -574,11 +586,14 @@ public class TreeMap<K,V>
                     return t.setValue(value);
             } while (t != null);
         }
+        // 不断的比较，找到了没有相应儿子的节点
+        //（cmp<0就是没有左儿子，cmp>0就是没有右儿子）
         Entry<K,V> e = new Entry<>(key, value, parent);
         if (cmp < 0)
             parent.left = e;
         else
             parent.right = e;
+        // 新插入的元素破坏了红黑树规则，需要调整
         fixAfterInsertion(e);
         size++;
         modCount++;
@@ -600,6 +615,7 @@ public class TreeMap<K,V>
      *         does not permit null keys
      */
     public V remove(Object key) {
+        // 先用二分法获取这个元素，如果为null，不需要继续了
         Entry<K,V> p = getEntry(key);
         if (p == null)
             return null;
@@ -2167,15 +2183,20 @@ public class TreeMap<K,V>
     /**
      * Returns the predecessor of the specified Entry, or null if no such.
      */
+    // 获取前一个元素
     static <K,V> Entry<K,V> predecessor(Entry<K,V> t) {
         if (t == null)
             return null;
         else if (t.left != null) {
+            // t有左孩子，所以t的前一个元素是它左孩子所在的子树的最右侧叶子结点
             Entry<K,V> p = t.left;
             while (p.right != null)
                 p = p.right;
             return p;
         } else {
+            // t没有左孩子，所以t的前一个元素有两种情况
+            // 1. t是右孩子，那它的前一个元素就是它的父结点
+            // 2. t是左孩子，它的前一个元素需要向上递归，直到递归到下一个是右孩子的节点，转为情况1
             Entry<K,V> p = t.parent;
             Entry<K,V> ch = t;
             while (p != null && ch == p.left) {
@@ -2218,14 +2239,16 @@ public class TreeMap<K,V>
     }
 
     /** From CLR */
+    // 右旋与左旋思路一致，只分析其一
+    // 结果相当于把p和p的儿子调换了
     private void rotateLeft(Entry<K,V> p) {
         if (p != null) {
-            Entry<K,V> r = p.right;
-            p.right = r.left;
+            Entry<K,V> r = p.right;// 取出p的右儿子
+            p.right = r.left;// 然后将p的右儿子的左儿子，也就是p的左孙子变成p的右儿子
             if (r.left != null)
-                r.left.parent = p;
-            r.parent = p.parent;
-            if (p.parent == null)
+                r.left.parent = p;// p的左孙子的父亲现在是p
+            r.parent = p.parent;// 然后把p的父亲，设置为p右儿子的父亲
+            if (p.parent == null)// 这说明p原来是root节点
                 root = r;
             else if (p.parent.left == p)
                 p.parent.left = r;
@@ -2255,44 +2278,59 @@ public class TreeMap<K,V>
 
     /** From CLR */
     private void fixAfterInsertion(Entry<K,V> x) {
+        // 先把x节点染成红色，这样可以不增加黑高，简化调整问题
         x.color = RED;
 
+        // 条件是父节点是红色的，且x不是root节点，
+        // 因为到root节点后就走到另外的分支了，而那个分支是正确的
         while (x != null && x != root && x.parent.color == RED) {
             if (parentOf(x) == leftOf(parentOf(parentOf(x)))) {
+                // y是x的叔叔，也就是祖父节点的右儿子
                 Entry<K,V> y = rightOf(parentOf(parentOf(x)));
+                //叔叔是红色的
                 if (colorOf(y) == RED) {
                     setColor(parentOf(x), BLACK);
                     setColor(y, BLACK);
                     setColor(parentOf(parentOf(x)), RED);
+                    // 调整完毕，继续向上循环
                     x = parentOf(parentOf(x));
                 } else {
+                    // 叔叔是黑色的
                     if (x == rightOf(parentOf(x))) {
+                        // x是右节点，以其父节点左旋
                         x = parentOf(x);
                         rotateLeft(x);
                     }
+                    // 右旋
                     setColor(parentOf(x), BLACK);
                     setColor(parentOf(parentOf(x)), RED);
                     rotateRight(parentOf(parentOf(x)));
                 }
             } else {
+                // x的父节点是其祖父节点的右儿子
+                // y是其叔叔
                 Entry<K,V> y = leftOf(parentOf(parentOf(x)));
                 if (colorOf(y) == RED) {
+                    //叔叔是红色的
                     setColor(parentOf(x), BLACK);
                     setColor(y, BLACK);
                     setColor(parentOf(parentOf(x)), RED);
+                    // 调整完毕，继续向上循环
                     x = parentOf(parentOf(x));
                 } else {
                     if (x == leftOf(parentOf(x))) {
+                        // x是左节点，以其父节点右旋
                         x = parentOf(x);
                         rotateRight(x);
                     }
+                    //左旋
                     setColor(parentOf(x), BLACK);
                     setColor(parentOf(parentOf(x)), RED);
                     rotateLeft(parentOf(parentOf(x)));
                 }
             }
         }
-        root.color = BLACK;
+        root.color = BLACK;//root节点颜色为黑色
     }
 
     /**
@@ -2304,6 +2342,7 @@ public class TreeMap<K,V>
 
         // If strictly internal, copy successor's element to p and then make p
         // point to successor.
+        //如果p有两个儿子，就把p指向它的后继者，也就是它后边的元素
         if (p.left != null && p.right != null) {
             Entry<K,V> s = successor(p);
             p.key = s.key;
@@ -2312,30 +2351,38 @@ public class TreeMap<K,V>
         } // p has 2 children
 
         // Start fixup at replacement node, if it exists.
+        // p有一个儿子，或者没有儿子，获取到之后放在replacement中
         Entry<K,V> replacement = (p.left != null ? p.left : p.right);
 
+        // p有儿子
         if (replacement != null) {
             // Link replacement to parent
-            replacement.parent = p.parent;
+            replacement.parent = p.parent;// 把p的子孙接在p的父级
+            //p是根节点
             if (p.parent == null)
                 root = replacement;
+            //p是左儿子
             else if (p == p.parent.left)
                 p.parent.left  = replacement;
+            // p是右儿子
             else
                 p.parent.right = replacement;
 
             // Null out links so they are OK to use by fixAfterDeletion.
+            //把p的链接都删掉
             p.left = p.right = p.parent = null;
 
             // Fix replacement
             if (p.color == BLACK)
+                //修正
                 fixAfterDeletion(replacement);
         } else if (p.parent == null) { // return if we are the only node.
             root = null;
         } else { //  No children. Use self as phantom replacement and unlink.
+            //p没有儿子
             if (p.color == BLACK)
                 fixAfterDeletion(p);
-
+            // 把其父节点链接到p的都去掉
             if (p.parent != null) {
                 if (p == p.parent.left)
                     p.parent.left = null;
@@ -2349,9 +2396,12 @@ public class TreeMap<K,V>
     /** From CLR */
     private void fixAfterDeletion(Entry<K,V> x) {
         while (x != root && colorOf(x) == BLACK) {
+            // x是左儿子
             if (x == leftOf(parentOf(x))) {
+                // sib是x的兄弟
                 Entry<K,V> sib = rightOf(parentOf(x));
 
+                // 兄弟是红色的
                 if (colorOf(sib) == RED) {
                     setColor(sib, BLACK);
                     setColor(parentOf(x), RED);
@@ -2359,11 +2409,13 @@ public class TreeMap<K,V>
                     sib = rightOf(parentOf(x));
                 }
 
+                // 兄弟没有孩子或者孩子是黑色的
                 if (colorOf(leftOf(sib))  == BLACK &&
                     colorOf(rightOf(sib)) == BLACK) {
                     setColor(sib, RED);
                     x = parentOf(x);
                 } else {
+                    // 兄弟的右孩子是黑色的
                     if (colorOf(rightOf(sib)) == BLACK) {
                         setColor(leftOf(sib), BLACK);
                         setColor(sib, RED);
@@ -2548,6 +2600,7 @@ public class TreeMap<K,V>
 
         Entry<K,V> left  = null;
         if (lo < mid)
+            // 递归左子树，和压栈类似，直到lo>=mid才能返回结果
             left = buildFromSorted(level+1, lo, mid - 1, redLevel,
                                    it, str, defaultVal);
 
@@ -2555,6 +2608,7 @@ public class TreeMap<K,V>
         K key;
         V value;
         if (it != null) {
+            // 给key和value赋值
             if (defaultVal==null) {
                 Map.Entry<?,?> entry = (Map.Entry<?,?>)it.next();
                 key = (K)entry.getKey();
@@ -2564,6 +2618,7 @@ public class TreeMap<K,V>
                 value = defaultVal;
             }
         } else { // use stream
+            // 从序列化中恢复
             key = (K) str.readObject();
             value = (defaultVal != null ? defaultVal : (V) str.readObject());
         }

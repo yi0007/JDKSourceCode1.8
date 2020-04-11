@@ -201,11 +201,13 @@ public class LinkedHashMap<K,V>
     /**
      * The head (eldest) of the doubly linked list.
      */
+    // 双向链表的头，用作AccessOrder时也是最老的元素
     transient LinkedHashMap.Entry<K,V> head;
 
     /**
      * The tail (youngest) of the doubly linked list.
      */
+    // 双向链表的尾，用作AccessOrder时也是最新的元素
     transient LinkedHashMap.Entry<K,V> tail;
 
     /**
@@ -214,6 +216,7 @@ public class LinkedHashMap<K,V>
      *
      * @serial
      */
+    // true则为访问顺序，false则为插入顺序
     final boolean accessOrder;
 
     // internal utilities
@@ -343,6 +346,7 @@ public class LinkedHashMap<K,V>
      * @throws IllegalArgumentException if the initial capacity is negative
      *         or the load factor is nonpositive
      */
+    // initialCapacity并没有在HashMap中那般重要，因为链表不需要像数组那样必须先声明足够的空间
     public LinkedHashMap(int initialCapacity, float loadFactor) {
         super(initialCapacity, loadFactor);
         accessOrder = false;

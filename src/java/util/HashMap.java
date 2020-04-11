@@ -432,16 +432,21 @@ public class HashMap<K, V> extends AbstractMap<K, V>
         int n, i;
         //如果哈希表为空，调用resize()创建一个哈希表，并用变量n记录哈希表长度
         if ((tab = table) == null || (n = tab.length) == 0)
+            // resize()不仅用来调整大小，还用来进行初始化配置
             n = (tab = resize()).length;
         /**
          * 如果指定参数hash在表中没有对应的桶，即为没有碰撞
          * Hash函数，(n - 1) & hash 计算key将被放置的槽位
          * (n - 1) & hash 本质上是hash % n，位运算更快
          */
+        // (n - 1) & hash这种方式也熟悉了吧？都在分析ArrayDeque中有体现
+        //这里就是看下在hash位置有没有元素，实际位置是hash % (length-1)
         if ((p = tab[i = (n - 1) & hash]) == null)
             //直接将键值对插入到map中即可
             tab[i] = newNode(hash, key, value, null);
         else {// 桶中已经存在元素
+            //这时就需要链表或红黑树了
+            // e是用来查看是不是待插入的元素已经有了，有就替换
             Node<K, V> e;
             K k;
             // 比较桶中第一个元素(数组中的结点)的hash值相等，key相等
@@ -454,15 +459,18 @@ public class HashMap<K, V> extends AbstractMap<K, V>
                 e = ((TreeNode<K, V>) p).putTreeVal(this, tab, hash, key, value);
                 // 当前桶中无该键值对，且桶是链表结构，按照链表结构插入到尾部
             else {
+                // 这时候就是链表结构了，要把待插入元素挂在链尾
                 for (int binCount = 0; ; ++binCount) {
                     // 遍历到链表尾部
                     if ((e = p.next) == null) {
                         p.next = newNode(hash, key, value, null);
                         // 检查链表长度是否达到阈值，达到将该槽位节点组织形式转为红黑树
+                        // 由于初始即为p.next，所以当插入第9个元素才会树化
                         if (binCount >= TREEIFY_THRESHOLD - 1) // -1 for 1st
                             treeifyBin(tab, hash);
                         break;
                     }
+                    // 找到了对应元素，就可以停止了
                     // 链表节点的<key, value>与put操作<key, value>相同时，不做重复操作，跳出循环
                     if (e.hash == hash &&
                             ((k = e.key) == key || (key != null && key.equals(k))))
@@ -566,23 +574,26 @@ public class HashMap<K, V> extends AbstractMap<K, V>
                         newTab[e.hash & (newCap - 1)] = e;
                         //如果旧桶中的结构为红黑树
                     else if (e instanceof TreeNode)
-                        //将树中的node分离
+                        //将树中的node分离，重新规划树，如果树的size很小，默认为6，就退化为链表
                         ((TreeNode<K, V>) e).split(this, newTab, j, oldCap);
                     else {  //如果旧桶中的结构为链表,链表重排，jdk1.8做的一系列优化
-                        Node<K, V> loHead = null, loTail = null;
-                        Node<K, V> hiHead = null, hiTail = null;
+                        Node<K, V> loHead = null, loTail = null;// loXXX指的是在原表中出现的位置
+                        Node<K, V> hiHead = null, hiTail = null;// hiXXX指的是在原表中不包含的位置
                         Node<K, V> next;
                         //遍历整个链表中的节点
                         do {
                             next = e.next;
                             // 原索引
+                            //这里把hash值与oldCap按位与。
+                            //oldCap是2的次幂，所以除了最高位为1以外其他位都是0
+                            // 和它按位与的结果为0，说明hash比它小，原表有这个位置
                             if ((e.hash & oldCap) == 0) {
                                 if (loTail == null)
                                     loHead = e;
                                 else
                                     loTail.next = e;
                                 loTail = e;
-                            } else {// 原索引+oldCap
+                            } else {
                                 if (hiTail == null)
                                     hiHead = e;
                                 else
@@ -591,11 +602,13 @@ public class HashMap<K, V> extends AbstractMap<K, V>
                             }
                         } while ((e = next) != null);
                         // 原索引放到bucket里
+                        // 挂在原表相应位置
                         if (loTail != null) {
                             loTail.next = null;
                             newTab[j] = loHead;
                         }
                         // 原索引+oldCap放到bucket里
+                        // 挂在后边
                         if (hiTail != null) {
                             hiTail.next = null;
                             newTab[j + oldCap] = hiHead;
@@ -622,6 +635,7 @@ public class HashMap<K, V> extends AbstractMap<K, V>
             // 红黑树的头、尾节点
             TreeNode<K, V> hd = null, tl = null;
             //遍历链表
+            // while循环的目的是把链表的每个节点转为TreeNode
             do {
                 //替换链表node为树node，建立双向链表
                 TreeNode<K, V> p = replacementTreeNode(e, null);
@@ -636,6 +650,9 @@ public class HashMap<K, V> extends AbstractMap<K, V>
             } while ((e = e.next) != null);
             //遍历链表插入每个节点到红黑树
             if ((tab[index] = hd) != null)
+                // 这里也用到了TreeNode的方法，我们在最后一起分析
+                // 通过头节点调节TreeNode
+                // 链表数据的顺序是不符合红黑树的，所以需要调整
                 hd.treeify(tab);
         }
     }
@@ -686,6 +703,9 @@ public class HashMap<K, V> extends AbstractMap<K, V>
      */
     final Node<K, V> removeNode(int hash, Object key, Object value,
                                 boolean matchValue, boolean movable) {
+        // matchValue是说只有value值相等时候才可以删除，我们是按照key删除的，所以可以忽略它。
+        // movable是指是否允许移动其他元素，这里是和TreeNode相关的
+
         Node<K, V>[] tab;
         Node<K, V> p;
         int n, index;
@@ -1954,32 +1974,49 @@ public class HashMap<K, V> extends AbstractMap<K, V>
                                         int h, K k, V v) {
             Class<?> kc = null;
             boolean searched = false;
+            // 获取到root节点
             TreeNode<K, V> root = (parent != null) ? root() : this;
             for (TreeNode<K, V> p = root; ; ) {
+                // dir表示查询方向
                 int dir, ph;
                 K pk;
+                // 要插入的位置在树的左侧
+                // 树化会依据key的hash值
                 if ((ph = p.hash) > h)
                     dir = -1;
+                // 要插入的位置在树的右侧
                 else if (ph < h)
                     dir = 1;
                 else if ((pk = p.key) == k || (k != null && k.equals(pk)))
-                    return p;
+                    return p;//找到了，替换即可
+
+                // comparableClassFor是如果key实现了Comparable就返回具体类型，否则返回null
+                // compareComparables是比较传入的key和当前遍历元素的key
+                // 只有当前hash值与传入的hash值一致才会走到这里
                 else if ((kc == null &&
                         (kc = comparableClassFor(k)) == null) ||
                         (dir = compareComparables(kc, k, pk)) == 0) {
                     if (!searched) {
                         TreeNode<K, V> q, ch;
+                        //左右都查过了
                         searched = true;
+                        // 通过hash和Comparable都找不到，只能从根节点开始遍历
                         if (((ch = p.left) != null &&
                                 (q = ch.find(h, k, kc)) != null) ||
                                 ((ch = p.right) != null &&
                                         (q = ch.find(h, k, kc)) != null))
                             return q;
                     }
+                    // 元素的hashCode一致，且没有实现Comparable，在树里也没有
+                    // tieBreakOrder则是调用System.identityHashCode(Object o)来进行比较，
+                    //它的意思是说不管有没有覆写hashCode，都强制使用Object类的hashCode
+                    // 这样做，是为了保持一致性的插入
                     dir = tieBreakOrder(k, pk);
                 }
 
+                // 代码执行到这，说明没有找到元素，也就是需要新建并插入了
                 TreeNode<K, V> xp = p;
+                // 经历过上述for循环，p已经到某个叶节点了
                 if ((p = (dir <= 0) ? p.left : p.right) == null) {
                     Node<K, V> xpn = xp.next;
                     TreeNode<K, V> x = map.newTreeNode(h, k, v, xpn);
@@ -1991,6 +2028,11 @@ public class HashMap<K, V> extends AbstractMap<K, V>
                     x.parent = x.prev = xp;
                     if (xpn != null)
                         ((TreeNode<K, V>) xpn).prev = x;
+                    // moveRootToFront目的很明确也是必须的。
+                    // 因为这个红黑树需要挂在数组的某个位置，所以其首个元素必须是root
+                    // balanceInsertion是因为插入元素后可能不符合红黑树定义了
+                    // 这部分知识在分析TreeMap中有详细介绍
+                    // 需要了解的话可以查看文末链接
                     moveRootToFront(tab, balanceInsertion(root, x));
                     return null;
                 }

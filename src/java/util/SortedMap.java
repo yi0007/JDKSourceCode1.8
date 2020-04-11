@@ -120,6 +120,7 @@ public interface SortedMap<K,V> extends Map<K,V> {
      *         or {@code null} if this map uses the natural ordering
      *         of its keys
      */
+    // 返回排序数据所用的Comparator
     Comparator<? super K> comparator();
 
     /**
@@ -151,6 +152,7 @@ public interface SortedMap<K,V> extends Map<K,V> {
      *         range, and {@code fromKey} or {@code toKey} lies
      *         outside the bounds of the range
      */
+    // 返回在[fromKey, toKey)之间的数据
     SortedMap<K,V> subMap(K fromKey, K toKey);
 
     /**
@@ -178,6 +180,7 @@ public interface SortedMap<K,V> extends Map<K,V> {
      *         restricted range, and {@code toKey} lies outside the
      *         bounds of the range
      */
+    // 返回从第一个元素到toKey之间的数据
     SortedMap<K,V> headMap(K toKey);
 
     /**
@@ -205,6 +208,7 @@ public interface SortedMap<K,V> extends Map<K,V> {
      *         restricted range, and {@code fromKey} lies outside the
      *         bounds of the range
      */
+    // 返回从fromKey到末尾之间的数据
     SortedMap<K,V> tailMap(K fromKey);
 
     /**
@@ -213,6 +217,7 @@ public interface SortedMap<K,V> extends Map<K,V> {
      * @return the first (lowest) key currently in this map
      * @throws NoSuchElementException if this map is empty
      */
+    //返回第一个数据的key
     K firstKey();
 
     /**
@@ -221,6 +226,7 @@ public interface SortedMap<K,V> extends Map<K,V> {
      * @return the last (highest) key currently in this map
      * @throws NoSuchElementException if this map is empty
      */
+    //返回最后一个数据的key
     K lastKey();
 
     /**
