@@ -384,10 +384,14 @@ public abstract class AbstractQueuedSynchronizer
         static final Node EXCLUSIVE = null;
 
         /** waitStatus value to indicate thread has cancelled */
+        //当前节点因为超时或中断被取消同步状态获取，该节点进入该状态不会再变化
         static final int CANCELLED =  1;
         /** waitStatus value to indicate successor's thread needs unparking */
+        // 标识后继的节点处于阻塞状态，当前节点在释放同步状态或被取消时，需要通知后继节点继续运行。
+        // 每个节点在阻塞前，需要标记其前驱节点的状态为SIGNAL。
         static final int SIGNAL    = -1;
         /** waitStatus value to indicate thread is waiting on condition */
+        // 标识当前节点是作为等待队列节点使用的。
         static final int CONDITION = -2;
         /**
          * waitStatus value to indicate the next acquireShared should
@@ -442,6 +446,7 @@ public abstract class AbstractQueuedSynchronizer
          * cancelled thread never succeeds in acquiring, and a thread only
          * cancels itself, not any other node.
          */
+        // 前驱节点
         volatile Node prev;
 
         /**
@@ -457,12 +462,14 @@ public abstract class AbstractQueuedSynchronizer
          * point to the node itself instead of null, to make life
          * easier for isOnSyncQueue.
          */
+        // 后继节点
         volatile Node next;
 
         /**
          * The thread that enqueued this node.  Initialized on
          * construction and nulled out after use.
          */
+        // 当前节点代表的线程
         volatile Thread thread;
 
         /**
@@ -475,6 +482,9 @@ public abstract class AbstractQueuedSynchronizer
          * we save a field by using special value to indicate shared
          * mode.
          */
+        // Node既可以作为同步队列节点使用，也可以作为Condition的等待队列节点使用
+        // 在作为同步队列节点时，nextWaiter可能有两个值：EXCLUSIVE、SHARED标识当前节点是独占模式还是共享模式
+        // 在作为等待队列节点使用时，nextWaiter保存后继节点
         Node nextWaiter;
 
         /**
@@ -1827,11 +1837,22 @@ public abstract class AbstractQueuedSynchronizer
      * <p>This class is Serializable, but all fields are transient,
      * so deserialized conditions have no waiters.
      */
+    /**
+     * Condition实现等待的时候内部也有一个等待队列，等待队列是一个隐式的单向队列，
+     * 等待队列中的每一个节点也是一个AbstractQueuedSynchronizer.Node实例。
+     *
+     * 每个Condition对象中保存了firstWaiter和lastWaiter作为队列首节点和尾节点，
+     * 每个节点使用Node.nextWaiter保存下一个节点的引用，因此等待队列是一个单向队列。
+     *
+     * 每当一个线程调用Condition.await()方法，那么该线程会释放锁，构造成一个Node节点加入到等待队列的队尾。
+     */
     public class ConditionObject implements Condition, java.io.Serializable {
         private static final long serialVersionUID = 1173984872572414699L;
         /** First node of condition queue. */
+        /** Condition Queue 里面的头节点 */
         private transient Node firstWaiter;
         /** Last node of condition queue. */
+        /** Condition Queue 里面的尾节点 */
         private transient Node lastWaiter;
 
         /**
@@ -1844,10 +1865,16 @@ public abstract class AbstractQueuedSynchronizer
         /**
          * Adds a new waiter to wait queue.
          * @return its new wait node
+         * 将当前线程封装成一个Node节点放入到Condition Queue里面
+         * 大家可以注意到, 下面对Condition Queue 的操作都没考虑到并发(Sync Queue 的队列是支持并发操作的), 这是为什么呢?
+         * 因为在进行操作 Condition队列 是当前的线程已经获取了AQS的独占锁, 所以不需要考虑并发的情况
          */
         private Node addConditionWaiter() {
-            Node t = lastWaiter;
+            Node t = lastWaiter; // 1. Condition queue 的尾节点
+
             // If lastWaiter is cancelled, clean out.
+            // 2.尾节点已经Cancel, 直接进行清除，这里有1个问题, 何时出现t.waitStatus != Node.CONDITION -> 在对线程进行中断时 ConditionObject -> await -> checkInterruptWhileWaiting -> transferAfterCancelledWait "compareAndSetWaitStatus(node, Node.CONDITION, 0)" <- 导致这种情况一般是 线程中断或 await 超时
+            // 一个注意点: 当Condition进行 awiat 超时或被中断时, Condition里面的节点是没有被删除掉的, 需要其他 await 在将线程加入 Condition Queue 时调用addConditionWaiter而进而删除, 或 await 操作差不多结束时, 调用 "node.nextWaiter != null" 进行判断而删除 (PS: 通过 signal 进行唤醒时 node.nextWaiter 会被置空, 而中断和超时时不会)
             if (t != null && t.waitStatus != Node.CONDITION) {
                 unlinkCancelledWaiters();
                 t = lastWaiter;
@@ -1904,22 +1931,29 @@ public abstract class AbstractQueuedSynchronizer
          * without requiring many re-traversals during cancellation
          * storms.
          */
+        /**
+         * 在调用 addConditionWaiter 将线程放入 Condition Queue 里面时 或 awiat 方法获取差不多结束时
+         * 进行清理 Condition queue 里面的因 timeout/interrupt 而还存在的节点，这个删除操作比较巧妙,
+         * 其中引入了 trail 节点，可以理解为traverse整个Condition Queue 时遇到的最后一个有效的节点
+         *
+         * 毫无疑问, 这是一段非常精巧的queue节点删除, 主要还是在 节点 trail 上, trail 节点可以理解为traverse整个 Condition Queue 时遇到的最后一个有效的节点
+         */
         private void unlinkCancelledWaiters() {
             Node t = firstWaiter;
             Node trail = null;
             while (t != null) {
-                Node next = t.nextWaiter;
-                if (t.waitStatus != Node.CONDITION) {
-                    t.nextWaiter = null;
-                    if (trail == null)
-                        firstWaiter = next;
+                Node next = t.nextWaiter;// 1. 先初始化 next 节点
+                if (t.waitStatus != Node.CONDITION) {// 2. 节点不有效, 在Condition Queue 里面 Node.waitStatus 只有可能是 CONDITION 或是 0(timeout/interrupt引起的)
+                    t.nextWaiter = null;// 3. Node.nextWaiter 置空
+                    if (trail == null)// 4. 一次都没有遇到有效的节点
+                        firstWaiter = next;// 5. 将 next 赋值给 firstWaiter(此时 next 可能也是无效的, 这只是一个临时处理)
                     else
-                        trail.nextWaiter = next;
+                        trail.nextWaiter = next;// 6. next 赋值给 trail.nextWaiter, 这一步其实就是删除节点 t
                     if (next == null)
-                        lastWaiter = trail;
+                        lastWaiter = trail;// 7. next == null 说明 已经 traverse 完了 Condition Queue
                 }
                 else
-                    trail = t;
+                    trail = t;// 8. 将有效节点赋值给 trail
                 t = next;
             }
         }
