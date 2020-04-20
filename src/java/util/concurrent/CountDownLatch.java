@@ -152,6 +152,13 @@ import java.util.concurrent.locks.AbstractQueuedSynchronizer;
  *
  * @since 1.5
  * @author Doug Lea
+ *
+ * 特点：
+ * 1.减计数方式
+ * 2.计算为0时释放所有等待的线程（AQS中的State为0）
+ * 3.计数为0时，无法重置
+ * 4.调用countDown()方法计数减一，调用await()方法只进行阻塞，对计数没任何影响
+ * 5.不可重复利用
  */
 public class CountDownLatch {
     /**
@@ -227,6 +234,7 @@ public class CountDownLatch {
      * @throws InterruptedException if the current thread is interrupted
      *         while waiting
      */
+    // 调用await()方法的线程会被挂起，它会等待直到count值为0才继续执行
     public void await() throws InterruptedException {
         sync.acquireSharedInterruptibly(1);
     }
@@ -287,6 +295,7 @@ public class CountDownLatch {
      *
      * <p>If the current count equals zero then nothing happens.
      */
+    // 持有锁 释放
     public void countDown() {
         sync.releaseShared(1);
     }

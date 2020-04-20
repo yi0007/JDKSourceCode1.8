@@ -153,6 +153,30 @@ import java.util.concurrent.locks.AbstractQueuedSynchronizer;
  * @since 1.5
  * @author Doug Lea
  */
+
+/**
+ * 面试题：
+ * 问题1.semaphore初始化有10个令牌，11个线程同时各调用1次acquire方法，会发生什么？
+ * 答案：拿不到令牌的线程阻塞，不会继续往下运行。
+ * 问题2.semaphore初始化有10个令牌，一个线程重复调用11次acquire方法，会发生什么？
+ * 答案：线程阻塞，不会继续往下运行。可能你会考虑类似于锁的重入的问题，很好，但是，令牌没有重入的概念。你只要调用一次acquire方法，就需要有一个令牌才能继续运行。
+ * 问题3.semaphore初始化有1个令牌，1个线程调用一次acquire方法，然后调用两次release方法，之后另外一个线程调用acquire(2)方法，此线程能够获取到足够的令牌并继续运行吗？
+ * 答案：能，原因是release方法会添加令牌，并不会以初始化的大小为准。
+ * 问题4.semaphore初始化有2个令牌，一个线程调用1次release方法，然后一次性获取3个令牌，会获取到吗？
+ * 答案：能，原因是release会添加令牌，并不会以初始化的大小为准。Semaphore中release方法的调用并没有限制要在acquire后调用。
+ *
+ * public static void main(String[] args) {
+ *         int permitsNum = 2;
+ *         final Semaphore semaphore = new Semaphore(permitsNum);
+ *         try {
+ *             System.out.println("availablePermits:"+semaphore.availablePermits()+",semaphore.tryAcquire(3,1, TimeUnit.SECONDS):"+semaphore.tryAcquire(3,1, TimeUnit.SECONDS));
+ *             semaphore.release();
+ *             System.out.println("availablePermits:"+semaphore.availablePermits()+",semaphore.tryAcquire(3,1, TimeUnit.SECONDS):"+semaphore.tryAcquire(3,1, TimeUnit.SECONDS));
+ *         }catch (Exception e) {
+ *
+ *         }
+ *     }
+ */
 public class Semaphore implements java.io.Serializable {
     private static final long serialVersionUID = -3222578661600680210L;
     /** All mechanics via AbstractQueuedSynchronizer subclass */
@@ -166,24 +190,36 @@ public class Semaphore implements java.io.Serializable {
     abstract static class Sync extends AbstractQueuedSynchronizer {
         private static final long serialVersionUID = 1192457210091910933L;
 
+        /**
+         * 指定 permit(许可证) 初始化 Semaphore
+         */
         Sync(int permits) {
             setState(permits);
         }
 
+        /**
+         * 返回剩余 permit(许可证)
+         */
         final int getPermits() {
             return getState();
         }
 
+        /**
+         * 获取 permit
+         */
         final int nonfairTryAcquireShared(int acquires) {
             for (;;) {
                 int available = getState();
-                int remaining = available - acquires;
+                int remaining = available - acquires;// 判断获取 acquires 的剩余 permit 数目
                 if (remaining < 0 ||
                     compareAndSetState(available, remaining))
                     return remaining;
             }
         }
 
+        /**
+         * 释放 lock
+         */
         protected final boolean tryReleaseShared(int releases) {
             for (;;) {
                 int current = getState();
@@ -195,6 +231,7 @@ public class Semaphore implements java.io.Serializable {
             }
         }
 
+        // 减少 permits
         final void reducePermits(int reductions) {
             for (;;) {
                 int current = getState();
@@ -206,6 +243,7 @@ public class Semaphore implements java.io.Serializable {
             }
         }
 
+        /** 将 permit 置为 0 */
         final int drainPermits() {
             for (;;) {
                 int current = getState();
@@ -240,14 +278,17 @@ public class Semaphore implements java.io.Serializable {
             super(permits);
         }
 
+        /**
+         * 公平版本获取 permit 主要看是否由前继节点
+         */
         protected int tryAcquireShared(int acquires) {
             for (;;) {
-                if (hasQueuedPredecessors())
+                if (hasQueuedPredecessors())// 1. 判断是否Sync Queue 里面是否有前继节点
                     return -1;
                 int available = getState();
                 int remaining = available - acquires;
                 if (remaining < 0 ||
-                    compareAndSetState(available, remaining))
+                    compareAndSetState(available, remaining))// 2. cas 改变state
                     return remaining;
             }
         }
@@ -308,6 +349,9 @@ public class Semaphore implements java.io.Serializable {
      *
      * @throws InterruptedException if the current thread is interrupted
      */
+    /**
+     * 调用 acquireSharedInterruptibly 响应中断的方式获取 permit
+     */
     public void acquire() throws InterruptedException {
         sync.acquireSharedInterruptibly(1);
     }
@@ -330,6 +374,9 @@ public class Semaphore implements java.io.Serializable {
      * the time it would have received the permit had no interruption
      * occurred.  When the thread does return from this method its interrupt
      * status will be set.
+     */
+    /**
+     * 调用 acquireUninterruptibly 非响应中断的方式获取 permit
      */
     public void acquireUninterruptibly() {
         sync.acquireShared(1);
@@ -358,6 +405,9 @@ public class Semaphore implements java.io.Serializable {
      *
      * @return {@code true} if a permit was acquired and {@code false}
      *         otherwise
+     */
+    /**
+     * 尝试获取 permit
      */
     public boolean tryAcquire() {
         return sync.nonfairTryAcquireShared(1) >= 0;
@@ -404,6 +454,9 @@ public class Semaphore implements java.io.Serializable {
      *         if the waiting time elapsed before a permit was acquired
      * @throws InterruptedException if the current thread is interrupted
      */
+    /**
+     * 尝试的获取 permit, 支持超时与中断
+     */
     public boolean tryAcquire(long timeout, TimeUnit unit)
         throws InterruptedException {
         return sync.tryAcquireSharedNanos(1, unit.toNanos(timeout));
@@ -421,6 +474,9 @@ public class Semaphore implements java.io.Serializable {
      * have acquired that permit by calling {@link #acquire}.
      * Correct usage of a semaphore is established by programming convention
      * in the application.
+     */
+    /**
+     * 释放 permit
      */
     public void release() {
         sync.releaseShared(1);
@@ -462,6 +518,9 @@ public class Semaphore implements java.io.Serializable {
      * @throws InterruptedException if the current thread is interrupted
      * @throws IllegalArgumentException if {@code permits} is negative
      */
+    /**
+     * 支持中断的获取permit
+     */
     public void acquire(int permits) throws InterruptedException {
         if (permits < 0) throw new IllegalArgumentException();
         sync.acquireSharedInterruptibly(permits);
@@ -488,6 +547,9 @@ public class Semaphore implements java.io.Serializable {
      *
      * @param permits the number of permits to acquire
      * @throws IllegalArgumentException if {@code permits} is negative
+     */
+    /**
+     * 不响应中断的获取 permit
      */
     public void acquireUninterruptibly(int permits) {
         if (permits < 0) throw new IllegalArgumentException();
@@ -520,6 +582,9 @@ public class Semaphore implements java.io.Serializable {
      * @return {@code true} if the permits were acquired and
      *         {@code false} otherwise
      * @throws IllegalArgumentException if {@code permits} is negative
+     */
+    /**
+     * 尝试获取 permit
      */
     public boolean tryAcquire(int permits) {
         if (permits < 0) throw new IllegalArgumentException();
@@ -576,6 +641,9 @@ public class Semaphore implements java.io.Serializable {
      * @throws InterruptedException if the current thread is interrupted
      * @throws IllegalArgumentException if {@code permits} is negative
      */
+    /**
+     * 尝试 支持超时机制, 支持中断 的获取 permit
+     */
     public boolean tryAcquire(int permits, long timeout, TimeUnit unit)
         throws InterruptedException {
         if (permits < 0) throw new IllegalArgumentException();
@@ -604,6 +672,9 @@ public class Semaphore implements java.io.Serializable {
      * @param permits the number of permits to release
      * @throws IllegalArgumentException if {@code permits} is negative
      */
+    /**
+     * 释放 permit
+     */
     public void release(int permits) {
         if (permits < 0) throw new IllegalArgumentException();
         sync.releaseShared(permits);
@@ -616,6 +687,9 @@ public class Semaphore implements java.io.Serializable {
      *
      * @return the number of permits available in this semaphore
      */
+    /**
+     * 返回可用的 permit
+     */
     public int availablePermits() {
         return sync.getPermits();
     }
@@ -624,6 +698,9 @@ public class Semaphore implements java.io.Serializable {
      * Acquires and returns all permits that are immediately available.
      *
      * @return the number of permits acquired
+     */
+    /**
+     * 消耗光 permit
      */
     public int drainPermits() {
         return sync.drainPermits();
@@ -639,6 +716,9 @@ public class Semaphore implements java.io.Serializable {
      * @param reduction the number of permits to remove
      * @throws IllegalArgumentException if {@code reduction} is negative
      */
+    /**
+     * 减少 reduction 个permit
+     */
     protected void reducePermits(int reduction) {
         if (reduction < 0) throw new IllegalArgumentException();
         sync.reducePermits(reduction);
@@ -648,6 +728,9 @@ public class Semaphore implements java.io.Serializable {
      * Returns {@code true} if this semaphore has fairness set true.
      *
      * @return {@code true} if this semaphore has fairness set true
+     */
+    /**
+     * 判断是否是公平版本
      */
     public boolean isFair() {
         return sync instanceof FairSync;
@@ -663,6 +746,9 @@ public class Semaphore implements java.io.Serializable {
      * @return {@code true} if there may be other threads waiting to
      *         acquire the lock
      */
+    /**
+     * 返回 AQS 中 Sync Queue 里面的等待线程
+     */
     public final boolean hasQueuedThreads() {
         return sync.hasQueuedThreads();
     }
@@ -675,6 +761,9 @@ public class Semaphore implements java.io.Serializable {
      * system state, not for synchronization control.
      *
      * @return the estimated number of threads waiting for this lock
+     */
+    /**
+     * 返回 AQS 中 Sync Queue 里面的等待线程长度
      */
     public final int getQueueLength() {
         return sync.getQueueLength();
@@ -689,6 +778,9 @@ public class Semaphore implements java.io.Serializable {
      * subclasses that provide more extensive monitoring facilities.
      *
      * @return the collection of threads
+     */
+    /**
+     * 返回 AQS 中 Sync Queue 里面的等待线程
      */
     protected Collection<Thread> getQueuedThreads() {
         return sync.getQueuedThreads();

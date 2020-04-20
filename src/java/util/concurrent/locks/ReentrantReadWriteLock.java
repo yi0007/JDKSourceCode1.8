@@ -212,6 +212,17 @@ import java.util.Collection;
  * @since 1.5
  * @author Doug Lea
  */
+
+/**
+ * https://www.jianshu.com/p/6923c126e762
+ * 1. 读、写锁都可重入, 线程可同时具有读、写锁
+ * 2. 线程同时获取读写锁时, 必须先获取 writeLock, 再获取 readLock (也就是锁的降级), 反过来的直接导致死锁(这个问题下面会重点分析)
+ * 3. ReentrantReadWriteLock支持公平与非公平机制, 主要依据是 AQS 类中的Sync Queue 里面是否有节点 或 Sync Queue 里面的 head.next 是否是获取 writeLock 的线程节点; 公平模式就会依据获取的先后顺序在 SyncQueue 里面排队获取
+ * 4. 读写锁互斥
+ * 5. 获取 readLock 的过程中, 若此时有线程已获取写锁 或 AQS的 Sync Queue 里面有获取 writeLock 的线程, 则一定会等待获取writeLock成功并释放或放弃获取后才能获取(PS: 这里有个例外, 在死锁时, 已获取 readLock 的线程还是能重复获取 readLock)
+ * 6. 获取 writeLock 时 一定是在没有线程获取 readLock 或 writeLock 时才获取成功 (PS: 一个典型的死锁场景就是 一个线程先获取readLock, 后又获取writeLock)
+ * 7. 锁的获取支持线程中断, 且writeLock 中支持 Condition (PS: condition 只支持排他的场景)
+ */
 public class ReentrantReadWriteLock
         implements ReadWriteLock, java.io.Serializable {
     private static final long serialVersionUID = -6992448646407690164L;
@@ -225,6 +236,7 @@ public class ReentrantReadWriteLock
     /**
      * Creates a new {@code ReentrantReadWriteLock} with
      * default (nonfair) ordering properties.
+     * 用 nonfair 来构建 read/WriteLock (这里的 nonfair 指的是当进行获取 lock 时 若 aqs的syn queue 里面是否有 Node 节点而决定所采取的的策略)
      */
     public ReentrantReadWriteLock() {
         this(false);
@@ -249,6 +261,16 @@ public class ReentrantReadWriteLock
      * Synchronization implementation for ReentrantReadWriteLock.
      * Subclassed into fair and nonfair versions.
      */
+    /**
+     * ReentrantReadWriteLock 这里使用AQS里面的state的高低16位来记录 read /write 获取的次数(PS: writeLock 是排他的 exclusive, readLock 是共享的 sahred, )
+     * 记录的操作都是通过 CAS 操作(有竞争发生)
+     *
+     *  特点:
+     *      1) 同一个线程可以拥有 writeLock 与 readLock (但必须先获取 writeLock 再获取 readLock, 反过来进行获取会导致死锁)
+     *      2) writeLock 与 readLock 是互斥的(就像 Mysql 的 X S 锁)
+     *      3) 在因先获取 readLock 然后再进行获取 writeLock 而导致死锁时, 本线程一直卡住在对应获取 writeLock 的代码上(因为 readLock 与 writeLock 是互斥的, 在获取 writeLock 时监测到现在有线程获取 readLock , 锁一会一直在 aqs 的 sync queue 里面进行等待), 而此时
+     *         其他的线程想获取 writeLock 也会一直 block, 而若获取 readLock 若这个线程以前获取过 readLock, 则还能继续 重入 (reentrant), 而没有获取 readLock 的线程因为 aqs syn queue 里面有获取 writeLock 的 Node 节点存在会存放在 aqs syn queue 队列里面 一直 block
+     */
     abstract static class Sync extends AbstractQueuedSynchronizer {
         private static final long serialVersionUID = 6317671515068378041L;
 
@@ -259,22 +281,40 @@ public class ReentrantReadWriteLock
          * and the upper the shared (reader) hold count.
          */
 
+        /** 对 32 位的 int 进行分割 (对半 16) */
         static final int SHARED_SHIFT   = 16;
-        static final int SHARED_UNIT    = (1 << SHARED_SHIFT);
-        static final int MAX_COUNT      = (1 << SHARED_SHIFT) - 1;
-        static final int EXCLUSIVE_MASK = (1 << SHARED_SHIFT) - 1;
+        static final int SHARED_UNIT    = (1 << SHARED_SHIFT);// 000000000 00000001 00000000 00000000
+        static final int MAX_COUNT      = (1 << SHARED_SHIFT) - 1;// 000000000 00000000 11111111 11111111
+        static final int EXCLUSIVE_MASK = (1 << SHARED_SHIFT) - 1;// 000000000 00000000 11111111 11111111
+
+        /**
+         * 读写锁的获取次数存放在 AQS 里面的state上,
+         * state的高 16 位存放 readLock 获取的次数,
+         * 低16位 存放 writeLock 获取的次数.
+         */
 
         /** Returns the number of shared holds represented in count  */
-        static int sharedCount(int c)    { return c >>> SHARED_SHIFT; }
+        /** 计算 readLock 的获取次数(包含 reentrant 的次数) */
+        static int sharedCount(int c)    { return c >>> SHARED_SHIFT; }// 将字节向右移动 16位, 只剩下 原来的 高 16 位
         /** Returns the number of exclusive holds represented in count  */
-        static int exclusiveCount(int c) { return c & EXCLUSIVE_MASK; }
+        /** 计算 writeLock 的获取的次数(包括 reentrant的次数) */
+        static int exclusiveCount(int c) { return c & EXCLUSIVE_MASK; }// 与 EXCLUSIVE_MASK 与一下
 
+
+        /**
+         * 针对readLock 存储每个线程获取的次数是使用内部类 HoldCounter, 并且存储在 ThreadLocal 里面
+         */
         /**
          * A counter for per-thread read hold counts.
          * Maintained as a ThreadLocal; cached in cachedHoldCounter
          */
+        /**
+         * 几乎每个获取 readLock 的线程都会含有一个 HoldCounter 用来记录 线程 id 与 获取 readLock 的次数 ( writeLock 的获取是由 state 的低16位 及 aqs中的exclusiveOwnerThread 来进行记录)
+         * 这里有个注意点 第一次获取 readLock 的线程使用 firstReader, firstReaderHoldCount 来进行记录
+         * (PS: 不对, 我们想一下为什么不 统一用 HoldCounter 来进行记录呢? 原因: 所用的 HoldCounter 都是放在 ThreadLocal 里面, 而很多有些场景中只有一个线程获取 readLock 与 writeLock , 这种情况还用 ThreadLocal 的话那就有点浪费(ThreadLocal.get() 比直接 通过 reference 来获取数据相对来说耗性能))
+         */
         static final class HoldCounter {
-            int count = 0;
+            int count = 0;// 重复获取 readLock/writeLock 的次数
             // Use id, not reference, to avoid garbage retention
             final long tid = getThreadId(Thread.currentThread());
         }
@@ -283,6 +323,7 @@ public class ReentrantReadWriteLock
          * ThreadLocal subclass. Easiest to explicitly define for sake
          * of deserialization mechanics.
          */
+        /** 简单的自定义的 ThreadLocal 来用进行记录  readLock 获取的次数  */
         static final class ThreadLocalHoldCounter
             extends ThreadLocal<HoldCounter> {
             public HoldCounter initialValue() {
@@ -294,6 +335,9 @@ public class ReentrantReadWriteLock
          * The number of reentrant read locks held by current thread.
          * Initialized only in constructor and readObject.
          * Removed whenever a thread's read hold count drops to 0.
+         */
+        /**
+         *  readLock 获取记录容器 ThreadLocal(ThreadLocal 的使用过程中当 HoldCounter.count == 0 时要进行 remove , 不然很有可能导致 内存的泄露)
          */
         private transient ThreadLocalHoldCounter readHolds;
 
@@ -310,6 +354,11 @@ public class ReentrantReadWriteLock
          *
          * <p>Accessed via a benign data race; relies on the memory
          * model's final field and out-of-thin-air guarantees.
+         */
+        /**
+         * 最后一次获取 readLock 的 HoldCounter 的缓存
+         * (PS: 还是上面的问题 有了 readHolds 为什么还需要 cachedHoldCounter呢?
+         * 大非常大的场景中, 这次进行release readLock的线程就是上次 acquire 的线程, 这样直接通过cachedHoldCounter来进行获取, 节省了通过 readHolds 的 lookup 的过程)
          */
         private transient HoldCounter cachedHoldCounter;
 
@@ -331,6 +380,11 @@ public class ReentrantReadWriteLock
          * <p>This allows tracking of read holds for uncontended read
          * locks to be very cheap.
          */
+        /**
+         * 下面两个是用来进行记录 第一次获取 readLock 的线程的信息
+         * 准确的说是第一次获取 readLock 并且 没有 release 的线程,
+         * 一旦线程进行 release readLock, 则 firstReader会被置位 null
+         */
         private transient Thread firstReader = null;
         private transient int firstReaderHoldCount;
 
@@ -338,6 +392,16 @@ public class ReentrantReadWriteLock
             readHolds = new ThreadLocalHoldCounter();
             setState(getState()); // ensures visibility of readHolds
         }
+
+        /**
+         * 总结：针对获取 readLock 的线程的获取次数需要分3种情况：
+         * 1. 线程的tid 及获取次数 count 存放在 HoldCounter 里面, 最后放在ThreadLocal 中
+         * 2. 从cachedHoldCounter获取存入的信息, 额, 这里不是有 ThreadLocal, 干嘛还需要cachedHoldCounter呢?
+         *    原因是这样的, 但多数情况在进行线程 acquire readLock后不久就会进行相应的release, 而从 cachedHoldCounter 获取, 省去了从 ThreadLocal 中 lookup 的操作(其实就是节省资源, ThreadLocal 中的查找需要遍历数组)
+         * 3. firstReader firstReaderHoldCount 这两个属性是用来记录第一次获取锁的线程, 及重入的次数(这里说第一次有点不准确, 因为当线程进行释放 readLock 后, firstReader 会被置空, 当再有新的线程获取 readLock 后, firstReader 就会被赋值新的线程)
+         */
+
+
 
         /*
          * Acquires and releases use the same code for fair and
@@ -350,12 +414,18 @@ public class ReentrantReadWriteLock
          * the read lock, and otherwise eligible to do so, should block
          * because of policy for overtaking other waiting threads.
          */
+        /**
+         * 当线程进行获取 readLock 时的策略(这个策略依赖于 aqs 中 sync queue 里面的Node存在的情况来定),
+         */
         abstract boolean readerShouldBlock();
 
         /**
          * Returns true if the current thread, when trying to acquire
          * the write lock, and otherwise eligible to do so, should block
          * because of policy for overtaking other waiting threads.
+         */
+        /**
+         * 当线程进行获取 writerLock 时的策略(这个策略依赖于 aqs 中 sync queue 里面的Node存在的情况来定)
          */
         abstract boolean writerShouldBlock();
 
@@ -366,17 +436,28 @@ public class ReentrantReadWriteLock
          * condition wait and re-established in tryAcquire.
          */
 
+        /**
+         * 在进行 release 锁时, 调用子类的方法 tryRelease(主要是增对 aqs 的 state 的一下赋值操作)
+         * (PS: 这个操作只有exclusive的lock才会调用到)
+         * @param releases
+         * @return
+         */
         protected final boolean tryRelease(int releases) {
-            if (!isHeldExclusively())
+            if (!isHeldExclusively())// 1 监测当前的线程进行释放锁的线程是否是获取独占锁的线程
                 throw new IllegalMonitorStateException();
-            int nextc = getState() - releases;
-            boolean free = exclusiveCount(nextc) == 0;
+            int nextc = getState() - releases;// 2. 进行 state 的释放操作
+            boolean free = exclusiveCount(nextc) == 0;// 3. 判断 exclusive lock 是否释放完(因为这里支持 lock 的 reentrant)
             if (free)
-                setExclusiveOwnerThread(null);
-            setState(nextc);
-            return free;
+                setExclusiveOwnerThread(null);// 4. 锁释放掉后 清除掉 独占锁 exclusiveOwnerThread 的标志
+            setState(nextc); // 5. 直接修改 state 的值 (PS: 这里没有竞争的出现, 因为调用 tryRelease方法的都是独占锁, 互斥, 所以没有 readLock的获取, 相反 readLock 对 state 的修改就需要 CAS 操作)
+            return free;//方法最后返回的是 free, free 指的是writeLock是否完全释放完, 因为这里有 锁重入的情况, 而在完全释放好之后才会有后续的唤醒操作
         }
 
+        /**
+         * AQS 中 排他获取锁 模板方法acquire里面的策略方法  tryAcquire 的实现
+         * @param acquires
+         * @return
+         */
         protected final boolean tryAcquire(int acquires) {
             /*
              * Walkthrough:
@@ -391,52 +472,57 @@ public class ReentrantReadWriteLock
              */
             Thread current = Thread.currentThread();
             int c = getState();
-            int w = exclusiveCount(c);
+            int w = exclusiveCount(c);// 1. 获取现在writeLock 的获取的次数
             if (c != 0) {
                 // (Note: if c != 0 and w == 0 then shared count != 0)
-                if (w == 0 || current != getExclusiveOwnerThread())
+                if (w == 0 || current != getExclusiveOwnerThread())// 2. 并发的情况来了, 这里有两种情况 (1) c != 0 &&  w == 0 -> 说明现在只有读锁的存在, 则直接 return, return后一般就是进入 aqs 的 sync queue 里面进行等待获取 (2) c != 0 && w != 0 && current != getExclusiveOwnerThread() 压根就是其他的线程获取 read/writeLock, 读锁是排他的, 所以这里也直接 return -> 进入 aqs 的 sync queue 队列
                     return false;
-                if (w + exclusiveCount(acquires) > MAX_COUNT)
+                if (w + exclusiveCount(acquires) > MAX_COUNT)// 3. 计算是否获取writeLock的次数 饱和了(saturate)
                     throw new Error("Maximum lock count exceeded");
                 // Reentrant acquire
-                setState(c + acquires);
+                setState(c + acquires);// 4. 进行 state值得修改 (这里也不需要 CAS 为什么? 读锁是排他的, 没有其他线程和他竞争修改)
                 return true;
             }
             if (writerShouldBlock() ||
-                !compareAndSetState(c, c + acquires))
+                !compareAndSetState(c, c + acquires))// 5. 代码运行到这里 (c == 0) 这时可能代码刚刚到这边时, 就有可能其他的线程获取读锁, 所以 c == 0 不一定了, 所以需要再次调用 writerShouldBlock查看, 并且用 CAS 来进行 state 值得更改
                 return false;
-            setExclusiveOwnerThread(current);
+            setExclusiveOwnerThread(current); //  6. 设置 exclusiveOwnerThread writeLock 获取成功
             return true;
         }
 
+        /**
+         *  AQS 里面 releaseShared 的实现
+         * @param unused
+         * @return
+         */
         protected final boolean tryReleaseShared(int unused) {
             Thread current = Thread.currentThread();
-            if (firstReader == current) {
+            if (firstReader == current) {// 1. 判断现在进行 release 的线程是否是 firstReader
                 // assert firstReaderHoldCount > 0;
-                if (firstReaderHoldCount == 1)
+                if (firstReaderHoldCount == 1)// 2. 只获取一次 readLock 直接置空 firstReader
                     firstReader = null;
                 else
-                    firstReaderHoldCount--;
+                    firstReaderHoldCount--;// 3. 将 firstReaderHoldCount 减 1
             } else {
-                HoldCounter rh = cachedHoldCounter;
-                if (rh == null || rh.tid != getThreadId(current))
+                HoldCounter rh = cachedHoldCounter;// 4. 先通过 cachedHoldCounter 来取值
+                if (rh == null || rh.tid != getThreadId(current))// 5. cachedHoldCounter 代表的是上次获取 readLock 的线程, 若这次进行 release 的线程不是, 再通过 readHolds 进行 lookup 查找
                     rh = readHolds.get();
                 int count = rh.count;
                 if (count <= 1) {
-                    readHolds.remove();
+                    readHolds.remove();// 6. count <= 1 时要进行 ThreadLocal 的 remove , 不然容易内存泄露
                     if (count <= 0)
-                        throw unmatchedUnlockException();
+                        throw unmatchedUnlockException();// 7. 并发多次释放就有可能出现
                 }
-                --rh.count;
+                --rh.count;// 9. HoldCounter.count 减 1
             }
-            for (;;) {
+            for (;;) {// 10. 这里是一个 loop CAS 操作, 因为可能其他的线程此刻也在进行 release操作
                 int c = getState();
-                int nextc = c - SHARED_UNIT;
+                int nextc = c - SHARED_UNIT; // 11. 这里是 readLock 的减 1, 也就是 aqs里面state的高 16 上进行 减 1, 所以 减 SHARED_UNIT
                 if (compareAndSetState(c, nextc))
                     // Releasing the read lock has no effect on readers,
                     // but it may allow waiting writers to proceed if
                     // both read and write locks are now free.
-                    return nextc == 0;
+                    return nextc == 0;// 12. 返回值是判断 是否还有 readLock 没有释放完, 当释放完了会进行 后继节点的 唤醒( readLock 在进行获取成功时也进行传播式的唤醒后继的 获取 readLock 的节点)
             }
         }
 
@@ -445,6 +531,12 @@ public class ReentrantReadWriteLock
                 "attempt to unlock read lock, not locked by current thread");
         }
 
+        /**
+         * AQS 中 acquireShared 的子方法
+         * 主要是进行改变 aqs 的state的值进行获取 readLock
+         * @param unused
+         * @return
+         */
         protected final int tryAcquireShared(int unused) {
             /*
              * Walkthrough:
@@ -462,30 +554,30 @@ public class ReentrantReadWriteLock
              *    saturated, chain to version with full retry loop.
              */
             Thread current = Thread.currentThread();
-            int c = getState();
+            int c = getState();// 1. 判断是否有其他的线程获取了 writeLock, 有的话直接返回 -1 进行 aqs的 sync queue 里面
             if (exclusiveCount(c) != 0 &&
                 getExclusiveOwnerThread() != current)
                 return -1;
-            int r = sharedCount(c);
+            int r = sharedCount(c);// 2. 获取 readLock的获取次数
             if (!readerShouldBlock() &&
                 r < MAX_COUNT &&
-                compareAndSetState(c, c + SHARED_UNIT)) {
-                if (r == 0) {
+                compareAndSetState(c, c + SHARED_UNIT)) {// 3. if 中的判断主要是 readLock获取的策略, 及 操作 CAS 更改 state 值是否OK
+                if (r == 0) {//  4. r == 0 没有线程获取 readLock 直接对 firstReader firstReaderHoldCount 进行初始化
                     firstReader = current;
                     firstReaderHoldCount = 1;
-                } else if (firstReader == current) {
+                } else if (firstReader == current) {// 5. 第一个获取 readLock 的是 current 线程, 直接计数器加 1
                     firstReaderHoldCount++;
                 } else {
                     HoldCounter rh = cachedHoldCounter;
-                    if (rh == null || rh.tid != getThreadId(current))
+                    if (rh == null || rh.tid != getThreadId(current))// 6. 还是上面的逻辑, 先从 cachedHoldCounter, 数据不对的话, 再从readHolds拿数据
                         cachedHoldCounter = rh = readHolds.get();
-                    else if (rh.count == 0)
+                    else if (rh.count == 0)// 7. 为什么要 count == 0 时进行 ThreadLocal.set? 因为上面 tryReleaseShared方法 中当 count == 0 时, 进行了ThreadLocal.remove
                         readHolds.set(rh);
-                    rh.count++;
+                    rh.count++;// 8. 统一的 count++
                 }
                 return 1;
             }
-            return fullTryAcquireShared(current);
+            return fullTryAcquireShared(current);// 9.代码调用 fullTryAcquireShared 大体情况是 aqs 的 sync queue 里面有其他的节点 或 sync queue 的 head.next 是个获取 writeLock 的节点, 或 CAS 操作 state 失败
         }
 
         /**

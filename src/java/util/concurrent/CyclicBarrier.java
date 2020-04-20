@@ -135,6 +135,12 @@ import java.util.concurrent.locks.ReentrantLock;
  * @see CountDownLatch
  *
  * @author Doug Lea
+ * 特点：
+ * 1.加计数方式
+ * 2.计数达到指定值时释放所有等待线程
+ * 3.计数达到指定值时，计数置为0重新开始
+ * 4.调用await()方法计数加1，若加1后的值不等于构造方法的值，则线程阻塞
+ * 5.可重复利用
  */
 public class CyclicBarrier {
     /**
@@ -357,6 +363,7 @@ public class CyclicBarrier {
      *         broken when {@code await} was called, or the barrier
      *         action (if present) failed due to an exception
      */
+    //挂起当前线程，直至所有线程都到达barrier状态再同时执行后续任务；
     public int await() throws InterruptedException, BrokenBarrierException {
         try {
             return dowait(false, 0L);

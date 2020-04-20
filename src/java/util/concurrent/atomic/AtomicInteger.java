@@ -55,7 +55,9 @@ public class AtomicInteger extends Number implements java.io.Serializable {
     private static final long serialVersionUID = 6214790243416807050L;
 
     // setup to use Unsafe.compareAndSwapInt for updates
+    //JAVA实现CAS算法的类，整个类有关线程安全的操作，都是借助它来实现。
     private static final Unsafe unsafe = Unsafe.getUnsafe();
+    //变量value的内存首地址的偏移量。
     private static final long valueOffset;
 
     static {
