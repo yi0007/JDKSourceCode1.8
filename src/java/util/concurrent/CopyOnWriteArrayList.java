@@ -89,6 +89,18 @@ import sun.misc.SharedSecrets;
  * @author Doug Lea
  * @param <E> the type of elements held in this collection
  */
+
+/*
+ * 它主要具有一下特性:
+ *
+ * 1.所有元素都存储在数组里面, 只有当数组进行 remove, update时才在方法上加上 ReentrantLock ,
+ *   拷贝一份 snapshot 的数组, 只改变 snapshot 中的元素, 最后再赋值到 CopyOnWriteArrayList 中
+ * 2.所有的 get方法只是获取数组对应下标上的元素(无需加锁控制)
+
+ * 总结:
+    1.CopyOnWriteArrayList 是使用空间换时间的方式进行工作
+    2.它主要适用于 读多些少, 并且数据内容变化比较少的场景(最好初始化时就进行加载数据到CopyOnWriteArrayList 中)
+ */
 public class CopyOnWriteArrayList<E>
     implements List<E>, RandomAccess, Cloneable, java.io.Serializable {
     private static final long serialVersionUID = 8673264195747942595L;
@@ -431,6 +443,15 @@ public class CopyOnWriteArrayList<E>
      * @param e element to be appended to this list
      * @return {@code true} (as specified by {@link Collection#add})
      */
+    /*
+     * 增加元素 e 到数组的末尾
+     * 操作步骤:
+     *  1. 获取全局的 reentrantLock
+     *  2. 将原来的 array1 copy 到一个 array.length + 1 的数组 array2 里面
+     *  3. 将 先添加的元素e添加到新数组 array2 的最后一个空间里面 (array2[array2.length - 1] = e)
+     *  4. 将 新数组 array2 赋值给 CopyOnWriteArrayList 中的 array
+     */
+
     public boolean add(E e) {
         final ReentrantLock lock = this.lock;
         lock.lock();
@@ -452,6 +473,18 @@ public class CopyOnWriteArrayList<E>
      * any subsequent elements to the right (adds one to their indices).
      *
      * @throws IndexOutOfBoundsException {@inheritDoc}
+     */
+    /*
+         * 将元素 e 插入到数组 指定的索引下标 index 下
+         * 操作步骤:
+         *      1. 获取全局的锁
+         *      2. 获取 CopyOnWriteArrayList 的 array, 及 array.length
+         *      3. 进行参数校验 (index > len || index < 0) 则直接抛异常 -> 说明元素的插入只能在 0 - array.length 之间(包含两个端点)
+         *      4. 获取插入点 index 与 array.length 之间的步长, 进行分类讨论
+         *          1) 插入的数据正好在 原array数组的后一个节点 (numMoved = len), 则直接新建一个 array, 将原来的 array copy 过来
+         *          2) 插入的 index 满足 0 <= index <= len - 1, 则新建一个数组, 原来 o -> index(index不包含) 拷贝来, index后面的数据拷贝到新数组的 index + 1 的空间
+         *      5. 将 e 设置到 新 array 的 index 位置
+         *      6. 将 新 array 设置到 CopyOnWriteArrayList 里面
      */
     public void add(int index, E element) {
         final ReentrantLock lock = this.lock;

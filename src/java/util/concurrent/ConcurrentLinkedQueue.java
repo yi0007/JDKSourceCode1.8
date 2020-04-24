@@ -102,6 +102,22 @@ import java.util.function.Consumer;
  * @author Doug Lea
  * @param <E> the type of elements held in this collection
  */
+
+/**
+ * ConcurrentLinkedQueue只实现了Queue接口，并没有实现BlockingQueue接口，所以它不是阻塞队列，
+ * 也不能用于线程池中，但是它是线程安全的，可用于多线程环境中。
+ *
+ *
+ *  ConcurrentLinkedQueue与LinkedBlockingQueue对比？
+ * （1）两者都是线程安全的队列；
+ * （2）两者都可以实现取元素时队列为空直接返回null，后者的poll()方法可以实现此功能；
+ * （3）前者全程无锁，后者全部都是使用重入锁控制的；
+ * （4）前者效率较高，后者效率较低；
+ * （5）前者无法实现如果队列为空等待元素到来的操作；
+ * （6）前者是非阻塞队列，后者是阻塞队列；
+ * （7）前者无法用在线程池中，后者可以；
+ * @param <E>
+ */
 public class ConcurrentLinkedQueue<E> extends AbstractQueue<E>
         implements Queue<E>, java.io.Serializable {
     private static final long serialVersionUID = 196745693267521676L;
@@ -233,6 +249,7 @@ public class ConcurrentLinkedQueue<E> extends AbstractQueue<E>
      * - it is permitted for tail to lag behind head, that is, for tail
      *   to not be reachable from head!
      */
+    // 链表头节点
     private transient volatile Node<E> head;
 
     /**
@@ -247,12 +264,14 @@ public class ConcurrentLinkedQueue<E> extends AbstractQueue<E>
      *   to not be reachable from head!
      * - tail.next may or may not be self-pointing to tail.
      */
+    // 链表尾节点
     private transient volatile Node<E> tail;
 
     /**
      * Creates a {@code ConcurrentLinkedQueue} that is initially empty.
      */
     public ConcurrentLinkedQueue() {
+        // 初始化头尾节点
         head = tail = new Node<E>(null);
     }
 
@@ -267,6 +286,7 @@ public class ConcurrentLinkedQueue<E> extends AbstractQueue<E>
      */
     public ConcurrentLinkedQueue(Collection<? extends E> c) {
         Node<E> h = null, t = null;
+        // 遍历c，并把它元素全部添加到单链表中
         for (E e : c) {
             checkNotNull(e);
             Node<E> newNode = new Node<E>(e);

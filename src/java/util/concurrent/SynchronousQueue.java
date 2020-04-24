@@ -81,6 +81,24 @@ import java.util.Spliterators;
  * @author Doug Lea and Bill Scherer and Michael Scott
  * @param <E> the type of elements held in this collection
  */
+
+/**
+ * https://blog.csdn.net/tangtong1/article/details/89528209
+ * （1）定义了一个抽象类Transferer，里面定义了一个传输元素的方法；
+ * （2）有两种传输元素的方法，一种是栈，一种是队列；
+ * （3）栈的特点是后进先出，队列的特点是先进行出；
+ * （4）栈只需要保存一个头节点就可以了，因为存取元素都是操作头节点；
+ * （5）队列需要保存一个头节点一个尾节点，因为存元素操作尾节点，取元素操作头节点；
+ * （6）每个节点中保存着存储的元素、等待着的线程，以及下一个节点；
+ * （7）栈和队列两种方式有什么不同呢？请看下面的分析。
+ *
+ * https://www.jianshu.com/p/95cb570c8187
+ * 1. 整个 queue 没有容量, 表现为, 你每次进行put值进去时, 必须等待相应的 consumer 拿走数据后才可以再次 put 数据
+ * 2. queue 对应 peek, contains, clear, isEmpty ... 等方法其实是无效的
+ * 3. 整个 queue 分为 公平(TransferQueue FIFO)与非公平模式(TransferStack LIFO 默认)
+ * 4. 若使用 TransferQueue, 则队列中永远会存在一个 dummy node
+ *
+ */
 public class SynchronousQueue<E> extends AbstractQueue<E>
     implements BlockingQueue<E>, java.io.Serializable {
     private static final long serialVersionUID = -3223113410248163686L;
@@ -165,6 +183,7 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
     /**
      * Shared internal API for dual stacks and queues.
      */
+    // Transferer抽象类，主要定义了一个transfer方法用来传输元素
     abstract static class Transferer<E> {
         /**
          * Performs a put or take.
@@ -183,6 +202,7 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
     }
 
     /** The number of CPUs, for spin control */
+    // CPU的数量
     static final int NCPUS = Runtime.getRuntime().availableProcessors();
 
     /**
@@ -192,6 +212,7 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      * seems not to vary with number of CPUs (beyond 2) so is just
      * a constant.
      */
+    // 有超时的情况自旋多少次，当CPU数量小于2的时候不自旋
     static final int maxTimedSpins = (NCPUS < 2) ? 0 : 32;
 
     /**
@@ -199,15 +220,18 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      * This is greater than timed value because untimed waits spin
      * faster since they don't need to check times on each spin.
      */
+    // 没有超时的情况自旋多少次
     static final int maxUntimedSpins = maxTimedSpins * 16;
 
     /**
      * The number of nanoseconds for which it is faster to spin
      * rather than to use timed park. A rough estimate suffices.
      */
+    // 针对有超时的情况，自旋了多少次后，如果剩余时间大于1000纳秒就使用带时间的LockSupport.parkNanos()这个方法
     static final long spinForTimeoutThreshold = 1000L;
 
     /** Dual stack */
+    // 以栈方式实现的Transferer
     static final class TransferStack<E> extends Transferer<E> {
         /*
          * This extends Scherer-Scott dual stack algorithm, differing,
@@ -219,10 +243,14 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
 
         /* Modes for SNodes, ORed together in node fields */
         /** Node represents an unfulfilled consumer */
+        // 栈中节点的几种类型：
+        // 1. 消费者（请求数据的）
         static final int REQUEST    = 0;
         /** Node represents an unfulfilled producer */
+        // 2. 生产者（提供数据的）
         static final int DATA       = 1;
         /** Node is fulfilling another unfulfilled DATA or REQUEST */
+        // 3. 二者正在匹配中
         static final int FULFILLING = 2;
 
         /** Returns true if m has fulfilling bit set. */
@@ -230,10 +258,15 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
 
         /** Node class for TransferStacks. */
         static final class SNode {
+            // 下一个节点
             volatile SNode next;        // next node in stack
+            // 匹配者
             volatile SNode match;       // the node matched to this
+            // 等待着的线程
             volatile Thread waiter;     // to control park/unpark
+            // 元素
             Object item;                // data; or null for REQUESTs
+            // 模式，也就是节点的类型，是消费者，是生产者，还是正在匹配中
             int mode;
             // Note: item and mode fields don't need to be volatile
             // since they are always written before, and read after,
@@ -300,7 +333,7 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
         }
 
         /** The head (top) of the stack */
-        volatile SNode head;
+        volatile SNode head;// 栈的头节点
 
         boolean casHead(SNode h, SNode nh) {
             return h == head &&
@@ -523,6 +556,7 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
     }
 
     /** Dual Queue */
+    // 以队列方式实现的Transferer
     static final class TransferQueue<E> extends Transferer<E> {
         /*
          * This extends Scherer-Scott dual queue algorithm, differing,
@@ -534,10 +568,15 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
          */
 
         /** Node class for TransferQueue. */
+        // 队列中的节点
         static final class QNode {
+            // 下一个节点
             volatile QNode next;          // next node in queue
+            // 存储的元素
             volatile Object item;         // CAS'ed to or from null
+            // 等待着的线程
             volatile Thread waiter;       // to control park/unpark
+            // 是否是数据节点
             final boolean isData;
 
             QNode(Object item, boolean isData) {
@@ -595,13 +634,24 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
         }
 
         /** Head of queue */
+        // 队列的头节点
         transient volatile QNode head;
         /** Tail of queue */
+        // 队列的尾节点
         transient volatile QNode tail;
         /**
          * Reference to a cancelled node that might not yet have been
          * unlinked from queue because it was the last inserted node
          * when it was cancelled.
+         */
+        /**
+         * 对应 中断或超时的 前继节点,这个节点存在的意义是标记, 它的下个节点要删除
+         * 何时使用:
+         *      当你要删除 节点 node, 若节点 node 是队列的末尾, 则开始用这个节点,
+         * 为什么呢？
+         *      大家知道 删除一个节点 直接 A.CASNext(B, B.next) 就可以,但是当  节点 B 是整个队列中的末尾元素时,
+         *      一个线程删除节点B, 一个线程在节点B之后插入节点 这样操作容易致使插入的节点丢失, 这个cleanMe很像
+         *      ConcurrentSkipListMap 中的 删除添加的 marker 节点, 他们都是起着相同的作用
          */
         transient volatile QNode cleanMe;
 
@@ -846,6 +896,7 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      * isn't a noticeable performance penalty for using volatile
      * instead of final here.
      */
+    // 传输器，即两个线程交换元素使用的东西
     private transient volatile Transferer<E> transferer;
 
     /**
