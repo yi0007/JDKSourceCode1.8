@@ -1480,36 +1480,41 @@ public class Thread implements Runnable {
      */
     public enum State {
         /**
-         * 线程还没有启动
+         * 新建状态，线程还未开始
          */
         NEW,
 
         /**
-         * 运行中的线程
+         * 可运行状态，正在运行或者在等待系统资源，比如CPU
          */
         RUNNABLE,
 
         /**
-         * 阻塞的，可能是在等待进入同步块/方法时被阻塞的
+         * 阻塞的，可能是在等待进入同步块/方法时被阻塞的，在等待一个监视器锁（也就是我们常说的synchronized）
          * WAITING 不同在于， BLOCKED 是还没有进入同步块/方法时被阻塞，WAITING 是已经进去到获取同步块的过程中了，但却获取不到锁
          */
         BLOCKED,
 
         /**
-         * 等待，遇到 Object#wait()、Thread.join、LockSupport#park() 这些方法时，线程就会等待
-         * 等待另外一个线程执行特定的操作
-         * 一个线程 Object.wait() 后，需要等待另外一个线程执行同一个 Object 的 notify()
-         * 或者线程执行 thread1.join()，等待 thread1 来打断
+         * 等待状态，在调用了以下方法后进入此状态
+         * 1. Object.wait()无超时的方法后且未被notify()前，如果被notify()了会进入BLOCKED状态
+         * 2. Thread.join()无超时的方法后
+         * 3. LockSupport.park()无超时的方法后
          */
         WAITING,
 
         /**
-         * 等待一定的时间
+         * 超时等待状态，在调用了以下方法后会进入超时等待状态
+         * 1. Thread.sleep()方法后【本文由公从号“彤哥读源码”原创】
+         * 2. Object.wait(timeout)方法后且未到超时时间前，如果达到超时了或被notify()了会进入BLOCKED状态
+         * 3. Thread.join(timeout)方法后
+         * 4. LockSupport.parkNanos(nanos)方法后
+         * 5. LockSupport.parkUntil(deadline)方法后
          */
         TIMED_WAITING,
 
         /**
-         * 终止线程
+         * 终止状态，线程已经执行完毕
          */
         TERMINATED;
     }
